@@ -12,54 +12,10 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
+import { io } from 'socket.io-client';
+
 // --- UTILS ---
-const DB_NAME = 'BirthdayAppDB';
-const STORE_NAME = 'memories';
-
-const initDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
-
-const saveMemoriesToDB = async (memories: any[]) => {
-  try {
-    const db = await initDB();
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    store.put(memories, 'current_memories');
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (e) {
-    console.error("DB Save Error", e);
-  }
-};
-
-const loadMemoriesFromDB = async (): Promise<any[] | null> => {
-  try {
-    const db = await initDB();
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
-    const request = store.get('current_memories');
-    return new Promise((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
-  } catch (e) {
-    console.error("DB Load Error", e);
-    return null;
-  }
-};
+const socket = io();
 
 // --- ADMIN PANEL ---
 const AdminPanel = ({ 
@@ -597,40 +553,40 @@ export default function App() {
   const [showLetter, setShowLetter] = useState(false);
   const [petalTrigger, setPetalTrigger] = useState(0);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [memories, setMemories] = useState<any[]>([
-    { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
-    { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
-    { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
-    { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
-    { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
-    { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
-  ]);
+  const [memories, setMemories] = useState<any[]>([]);
 
   useEffect(() => {
-    const initMemories = async () => {
-      const saved = await loadMemoriesFromDB();
-      if (saved) {
-        setMemories(saved);
-      } else {
-        // Fallback to localStorage if DB is empty (migration)
-        try {
-          const legacy = localStorage.getItem('birthday_memories');
-          if (legacy) {
-            const parsed = JSON.parse(legacy);
-            setMemories(parsed);
-            await saveMemoriesToDB(parsed);
-          }
-        } catch (e) {
-          console.warn("Legacy load failed", e);
-        }
-      }
+    const fetchMemories = async () => {
+      const res = await fetch('/api/memories');
+      const data = await res.json();
+      setMemories(data);
     };
-    initMemories();
-  }, []);
+    fetchMemories();
 
-  useEffect(() => {
-    saveMemoriesToDB(memories);
-  }, [memories]);
+    // Socket listeners for real-time sync
+    socket.on("memory:added", (newMemory) => {
+      setMemories(prev => [...prev, newMemory]);
+    });
+
+    socket.on("memory:updated", (updatedMemory) => {
+      setMemories(prev => prev.map(m => m.id === updatedMemory.id ? updatedMemory : m));
+    });
+
+    socket.on("memory:deleted", (id) => {
+      setMemories(prev => prev.filter(m => m.id !== id));
+    });
+
+    socket.on("memories:reset", (newMemories) => {
+      setMemories(newMemories);
+    });
+
+    return () => {
+      socket.off("memory:added");
+      socket.off("memory:updated");
+      socket.off("memory:deleted");
+      socket.off("memories:reset");
+    };
+  }, []);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -661,58 +617,65 @@ export default function App() {
     requestAnimationFrame(animate);
   };
 
-  const handleImageUpload = (id: number, event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (id: number, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Check file size (limit to 2MB for better performance, though IndexedDB can handle more)
       if (file.size > 5 * 1024 * 1024) {
         alert("This image is too large. Please choose an image smaller than 5MB.");
         return;
       }
 
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setMemories(prev => prev.map(m => 
-          m.id === id ? { ...m, url: reader.result as string } : m
-        ));
+      reader.onloadend = async () => {
+        const url = reader.result as string;
+        const memory = memories.find(m => m.id === id);
+        if (memory) {
+          await fetch(`/api/memories/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...memory, url })
+          });
+        }
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleTitleChange = (id: number, newTitle: string) => {
-    setMemories(prev => prev.map(m => 
-      m.id === id ? { ...m, title: newTitle } : m
-    ));
-  };
-
-  const resetMemories = () => {
-    if (window.confirm("Are you sure you want to reset all memories to default? This will delete your uploaded pictures.")) {
-      const defaults = [
-        { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
-        { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
-        { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
-        { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
-        { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
-        { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
-      ];
-      setMemories(defaults);
-      localStorage.removeItem('birthday_memories');
+  const handleTitleChange = async (id: number, newTitle: string) => {
+    // Optimistic update locally for smooth typing
+    setMemories(prev => prev.map(m => m.id === id ? { ...m, title: newTitle } : m));
+    
+    // Debounced or simple server update
+    const memory = memories.find(m => m.id === id);
+    if (memory) {
+      await fetch(`/api/memories/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...memory, title: newTitle })
+      });
     }
   };
 
-  const addMemory = () => {
-    const newId = memories.length > 0 ? Math.max(...memories.map(m => m.id)) + 1 : 1;
-    setMemories(prev => [...prev, {
-      id: newId,
-      url: `https://picsum.photos/seed/love${newId}/600/600`,
-      title: 'New Memory'
-    }]);
+  const resetMemories = async () => {
+    if (window.confirm("Are you sure you want to reset all memories to default for EVERYONE?")) {
+      await fetch('/api/memories/reset', { method: 'POST' });
+    }
   };
 
-  const deleteMemory = (id: number) => {
-    if (window.confirm("Delete this memory?")) {
-      setMemories(prev => prev.filter(m => m.id !== id));
+  const addMemory = async () => {
+    await fetch('/api/memories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `https://picsum.photos/seed/love${Date.now()}/600/600`,
+        title: 'New Memory'
+      })
+    });
+  };
+
+  const deleteMemory = async (id: number) => {
+    if (window.confirm("Delete this memory for EVERYONE?")) {
+      await fetch(`/api/memories/${id}`, { method: 'DELETE' });
     }
   };
 
