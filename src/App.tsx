@@ -8,9 +8,192 @@ import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
 import { 
   Heart, Music, Pause, Play, Camera, Mail, Sparkles, 
   Infinity as InfinityIcon, Flower2, Clock, Sun, Moon, 
-  Star, RefreshCcw, Lock, Unlock, Gift
+  Star, RefreshCcw, Lock, Unlock, Gift, Shield, Trash2, Plus, X, Settings
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+
+// --- UTILS ---
+const DB_NAME = 'BirthdayAppDB';
+const STORE_NAME = 'memories';
+
+const initDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const saveMemoriesToDB = async (memories: any[]) => {
+  try {
+    const db = await initDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    store.put(memories, 'current_memories');
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.error("DB Save Error", e);
+  }
+};
+
+const loadMemoriesFromDB = async (): Promise<any[] | null> => {
+  try {
+    const db = await initDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.get('current_memories');
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (e) {
+    console.error("DB Load Error", e);
+    return null;
+  }
+};
+
+// --- ADMIN PANEL ---
+const AdminPanel = ({ 
+  memories, 
+  onUpdateImage, 
+  onUpdateTitle, 
+  onAddMemory, 
+  onDeleteMemory,
+  onClose 
+}: { 
+  memories: any[], 
+  onUpdateImage: (id: number, e: React.ChangeEvent<HTMLInputElement>) => void,
+  onUpdateTitle: (id: number, title: string) => void,
+  onAddMemory: () => void,
+  onDeleteMemory: (id: number) => void,
+  onClose: () => void
+}) => {
+  const [password, setPassword] = useState('');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.toLowerCase() === 'queen' || password.toLowerCase() === 'love') {
+      setIsAuthenticated(true);
+      setError('');
+    } else {
+      setError('Incorrect Password');
+    }
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="fixed inset-0 z-[1000] bg-celebration-cream flex items-center justify-center p-6"
+      >
+        <div className="glass p-8 rounded-3xl max-w-sm w-full text-center">
+          <Shield className="mx-auto mb-4 text-celebration-pink" size={48} />
+          <h2 className="text-2xl font-serif font-bold text-celebration-pink mb-6">Admin Access</h2>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter Password"
+              className="w-full px-4 py-3 rounded-xl bg-white/50 border border-celebration-pink/20 focus:outline-none focus:border-celebration-pink text-center"
+            />
+            {error && <p className="text-red-500 text-sm">{error}</p>}
+            <div className="flex gap-3">
+              <button 
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-3 rounded-xl border border-celebration-pink/20 text-celebration-pink font-bold"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit"
+                className="flex-1 py-3 rounded-xl bg-celebration-pink text-white font-bold"
+              >
+                Enter
+              </button>
+            </div>
+          </form>
+          <p className="mt-6 text-[10px] text-celebration-pink/30 uppercase tracking-widest">Hint: What do I call you?</p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div 
+      initial={{ x: '100%' }}
+      animate={{ x: 0 }}
+      exit={{ x: '100%' }}
+      className="fixed inset-0 z-[1000] bg-celebration-cream overflow-y-auto p-6 md:p-12"
+    >
+      <div className="max-w-4xl mx-auto">
+        <div className="flex justify-between items-center mb-12">
+          <div>
+            <h2 className="text-3xl md:text-5xl font-serif font-bold text-celebration-pink">Memory Manager</h2>
+            <p className="text-celebration-pink/60">Add, edit, or remove our special moments.</p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="p-3 glass rounded-full text-celebration-pink hover:bg-celebration-pink hover:text-white transition-all"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <div className="grid gap-6">
+          {memories.map((photo) => (
+            <div key={photo.id} className="glass p-6 rounded-2xl flex flex-col md:flex-row gap-6 items-center">
+              <div className="w-32 h-32 rounded-xl overflow-hidden flex-shrink-0 border-2 border-celebration-pink/10">
+                <img src={photo.url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              </div>
+              <div className="flex-1 w-full space-y-4">
+                <input 
+                  type="text" 
+                  value={photo.title}
+                  onChange={(e) => onUpdateTitle(photo.id, e.target.value)}
+                  className="w-full bg-transparent border-b border-celebration-pink/20 text-xl font-serif italic text-celebration-pink focus:outline-none focus:border-celebration-pink"
+                />
+                <div className="flex flex-wrap gap-3">
+                  <label className="flex-1 flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-celebration-pink/10 text-celebration-pink text-sm font-bold cursor-pointer hover:bg-celebration-pink/20 transition-all">
+                    <Camera size={16} /> Change Image
+                    <input type="file" className="hidden" accept="image/*" onChange={(e) => onUpdateImage(photo.id, e)} />
+                  </label>
+                  <button 
+                    onClick={() => onDeleteMemory(photo.id)}
+                    className="flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-red-50 text-red-500 text-sm font-bold hover:bg-red-100 transition-all"
+                  >
+                    <Trash2 size={16} /> Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          <button 
+            onClick={onAddMemory}
+            className="w-full py-8 border-2 border-dashed border-celebration-pink/20 rounded-2xl text-celebration-pink/40 hover:text-celebration-pink hover:border-celebration-pink/40 transition-all flex flex-col items-center gap-2"
+          >
+            <Plus size={32} />
+            <span className="font-bold uppercase tracking-widest text-xs">Add New Memory</span>
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
 
 // --- GIFT BOX ---
 const GiftBox = () => {
@@ -413,45 +596,40 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showLetter, setShowLetter] = useState(false);
   const [petalTrigger, setPetalTrigger] = useState(0);
-  const [memories, setMemories] = useState(() => {
-    try {
-      if (typeof window === 'undefined') return [
-        { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
-        { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
-        { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
-        { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
-        { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
-        { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
-      ];
-      
-      const saved = localStorage.getItem('birthday_memories');
-      return saved ? JSON.parse(saved) : [
-        { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
-        { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
-        { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
-        { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
-        { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
-        { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
-      ];
-    } catch (e) {
-      console.error("Failed to parse memories from localStorage", e);
-      return [
-        { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
-        { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
-        { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
-        { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
-        { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
-        { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
-      ];
-    }
-  });
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [memories, setMemories] = useState<any[]>([
+    { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
+    { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
+    { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
+    { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
+    { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
+    { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
+  ]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('birthday_memories', JSON.stringify(memories));
-    } catch (e) {
-      console.warn("Could not save to localStorage", e);
-    }
+    const initMemories = async () => {
+      const saved = await loadMemoriesFromDB();
+      if (saved) {
+        setMemories(saved);
+      } else {
+        // Fallback to localStorage if DB is empty (migration)
+        try {
+          const legacy = localStorage.getItem('birthday_memories');
+          if (legacy) {
+            const parsed = JSON.parse(legacy);
+            setMemories(parsed);
+            await saveMemoriesToDB(parsed);
+          }
+        } catch (e) {
+          console.warn("Legacy load failed", e);
+        }
+      }
+    };
+    initMemories();
+  }, []);
+
+  useEffect(() => {
+    saveMemoriesToDB(memories);
   }, [memories]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -486,6 +664,12 @@ export default function App() {
   const handleImageUpload = (id: number, event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      // Check file size (limit to 2MB for better performance, though IndexedDB can handle more)
+      if (file.size > 5 * 1024 * 1024) {
+        alert("This image is too large. Please choose an image smaller than 5MB.");
+        return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setMemories(prev => prev.map(m => 
@@ -493,6 +677,42 @@ export default function App() {
         ));
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const handleTitleChange = (id: number, newTitle: string) => {
+    setMemories(prev => prev.map(m => 
+      m.id === id ? { ...m, title: newTitle } : m
+    ));
+  };
+
+  const resetMemories = () => {
+    if (window.confirm("Are you sure you want to reset all memories to default? This will delete your uploaded pictures.")) {
+      const defaults = [
+        { id: 1, url: 'https://picsum.photos/seed/love1/600/600', title: 'Our First Date' },
+        { id: 2, url: 'https://picsum.photos/seed/love2/600/600', title: 'Summer Trip' },
+        { id: 3, url: 'https://picsum.photos/seed/love3/600/600', title: 'Beautiful Moments' },
+        { id: 4, url: 'https://picsum.photos/seed/love4/600/600', title: 'Together Forever' },
+        { id: 5, url: 'https://picsum.photos/seed/love5/600/600', title: 'Laughs & Joy' },
+        { id: 6, url: 'https://picsum.photos/seed/love6/600/600', title: 'My Everything' },
+      ];
+      setMemories(defaults);
+      localStorage.removeItem('birthday_memories');
+    }
+  };
+
+  const addMemory = () => {
+    const newId = memories.length > 0 ? Math.max(...memories.map(m => m.id)) + 1 : 1;
+    setMemories(prev => [...prev, {
+      id: newId,
+      url: `https://picsum.photos/seed/love${newId}/600/600`,
+      title: 'New Memory'
+    }]);
+  };
+
+  const deleteMemory = (id: number) => {
+    if (window.confirm("Delete this memory?")) {
+      setMemories(prev => prev.filter(m => m.id !== id));
     }
   };
 
@@ -513,7 +733,20 @@ Me`;
       <Balloons />
       <RosePetals trigger={petalTrigger} />
       
-      <audio ref={audioRef} loop src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" />
+      <AnimatePresence>
+        {isAdminOpen && (
+          <AdminPanel 
+            memories={memories}
+            onUpdateImage={handleImageUpload}
+            onUpdateTitle={handleTitleChange}
+            onAddMemory={addMemory}
+            onDeleteMemory={deleteMemory}
+            onClose={() => setIsAdminOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+      
+      <audio ref={audioRef} loop src="https://archive.org/download/MaherZainNasheeds/Maher%20Zain%20-%20Mawlaya.mp3" />
 
       {/* Floating Controls */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-4">
@@ -534,6 +767,13 @@ Me`;
           className="p-4 glass rounded-full shadow-2xl text-celebration-pink hover:scale-110 transition-transform"
         >
           {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+        </button>
+        <button
+          onClick={() => setIsAdminOpen(true)}
+          className="p-4 glass rounded-full shadow-2xl text-celebration-pink/40 hover:text-celebration-pink hover:scale-110 transition-transform"
+          title="Admin Panel"
+        >
+          <Settings size={24} />
         </button>
       </div>
 
@@ -701,7 +941,13 @@ Me`;
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-20">
             <h2 className="text-4xl md:text-7xl font-serif font-bold text-celebration-pink mb-6">Our Eternal Memories</h2>
-            <p className="text-celebration-text/40 italic font-serif text-xl">Captured moments, frozen in time.</p>
+            <p className="text-celebration-text/40 italic font-serif text-xl mb-8">Captured moments, frozen in time.</p>
+            <button 
+              onClick={resetMemories}
+              className="text-xs text-celebration-pink/40 hover:text-celebration-pink transition-colors underline"
+            >
+              Reset to Default Memories
+            </button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
             {memories.map((photo, index) => (
@@ -721,12 +967,21 @@ Me`;
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-celebration-cream via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col justify-end p-8">
-                  <div className="flex justify-between items-center">
-                    <p className="text-celebration-pink font-serif text-2xl italic">{photo.title}</p>
-                    <label className="cursor-pointer p-3 glass-dark rounded-full hover:bg-celebration-pink hover:text-white transition-all">
-                      <Camera size={24} />
-                      <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(photo.id, e)} />
-                    </label>
+                  <div className="flex flex-col gap-4">
+                    <input 
+                      type="text" 
+                      value={photo.title}
+                      onChange={(e) => handleTitleChange(photo.id, e.target.value)}
+                      className="bg-transparent border-b border-celebration-pink/20 text-celebration-pink font-serif text-2xl italic focus:outline-none focus:border-celebration-pink"
+                      placeholder="Enter memory title..."
+                    />
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] uppercase tracking-widest text-celebration-pink/40">Click title to edit</span>
+                      <label className="cursor-pointer p-3 glass-dark rounded-full hover:bg-celebration-pink hover:text-white transition-all">
+                        <Camera size={24} />
+                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(photo.id, e)} />
+                      </label>
+                    </div>
                   </div>
                 </div>
               </motion.div>
